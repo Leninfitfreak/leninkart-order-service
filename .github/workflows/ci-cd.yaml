@@ -15,22 +15,20 @@ env:
   SERVICE_NAME: order-service
   REGION: asia-south1
 
-  # Infra repo details
-  INFRA_REPO: ${{ secrets.INFRA_REPO }}             # e.g. Leninfitfreak/leninkart-infra
+  # Helm paths inside infra repo
+  INFRA_REPO: leninkart-infra
   INFRA_BRANCH: main
-
-  # Helm paths
-  CHART_PATH: helm/order-service
-  VALUES_PATH: helm/order-service/values.yaml
+  VALUES_FILE: helm/order-service/values.yaml
 
 jobs:
+
   build:
-    name: Build & Push image
+    name: Build & Push Image
     runs-on: ubuntu-latest
 
     outputs:
-      image: ${{ steps.expose.outputs.image }}
-      short_sha: ${{ steps.expose.outputs.short_sha }}
+      image_tag: ${{ steps.export.outputs.image_tag }}
+      image_full: ${{ steps.export.outputs.image_full }}
 
     steps:
       - name: Checkout source
@@ -42,128 +40,75 @@ jobs:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker asia-south1-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - name: Set image variables
-        id: vars
+      - name: Build Docker Image
         run: |
-          FULL_SHA="${{ github.sha }}"
-          SHORT_SHA=${FULL_SHA:0:7}
-          BRANCH_SAFE=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          TAG="${BRANCH_SAFE}-${SHORT_SHA}"
+          TAG="${{ github.sha }}"
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.ARTIFACT_REPO }}/${{ env.SERVICE_NAME }}:${TAG}"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          docker build -t "$IMAGE" .
 
-          IMAGE="asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.ARTIFACT_REPO }}/${{ env.SERVICE_NAME }}:${TAG}"
-
-          echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
-          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_OUTPUT
-          echo "IMAGE=${IMAGE}" >> $GITHUB_OUTPUT
-
-      - name: Build Docker image
-        run: docker build -t "$IMAGE" .
-
-      - name: Push Docker image
+      - name: Push Docker Image
         run: docker push "$IMAGE"
 
-      - name: Expose Image Output
-        id: expose
+      - name: Export Image Info
+        id: export
         run: |
-          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
-          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "image_full=$IMAGE" >> $GITHUB_OUTPUT
 
-  update-infra:
-    name: Update Helm chart in infra repo
+
+  update-helm:
+    name: Update Helm values.yaml in Infra Repo
     needs: build
     runs-on: ubuntu-latest
 
-    env:
-      IMAGE_SET: ${{ needs.build.outputs.image }}
-
     steps:
-      - name: Create working folder
-        run: mkdir infra
+      - name: Checkout Infra Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/leninkart-infra
+          token: ${{ secrets.INFRA_PAT }}
+          ref: main
 
-      - name: Clone infra repo using PAT
-        env:
-          PAT: ${{ secrets.INFRA_PAT }}
+      - name: Update image in values.yaml
         run: |
-          git clone --depth 1 "https://x-access-token:${PAT}@github.com/${{ env.INFRA_REPO }}.git" infra
+          IMAGE_REPO="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.ARTIFACT_REPO }}/${{ env.SERVICE_NAME }}"
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
 
-      - name: Install yq
+          sed -i "s|repository:.*|repository: $IMAGE_REPO|g" ${{ env.VALUES_FILE }}
+          sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|g" ${{ env.VALUES_FILE }}
+
+      - name: Commit & Push
         run: |
-          wget https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64 -O /usr/local/bin/yq
-          chmod +x /usr/local/bin/yq
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
 
-      - name: Update Helm values.yaml
-        working-directory: infra
-        run: |
-          echo "Updating values.yaml to: ${IMAGE_SET}"
+          git add ${{ env.VALUES_FILE }}
+          git commit -m "Update image for order-service -> ${{ needs.build.outputs.image_tag }}" || echo "No changes"
+          git push origin main
 
-          yq eval ".image.repository = \"${IMAGE_SET%:*}\" | .image.tag = \"${IMAGE_SET##*:}\"" -i "${{ env.VALUES_PATH }}" \
-          || yq eval ".image = \"${IMAGE_SET}\"" -i "${{ env.VALUES_PATH }}"
 
-          echo "---- UPDATED FILE ----"
-          sed -n '1,200p' "${{ env.VALUES_PATH }}"
-
-      - name: Commit & Push changes
-        working-directory: infra
-        env:
-          MSG: "ci: update order-service image -> ${{ needs.build.outputs.image }}"
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add "${{ env.VALUES_PATH }}"
-          git commit -m "${MSG}" || echo "No changes to commit"
-
-          git push "https://x-access-token:${{ secrets.INFRA_PAT }}@github.com/${{ env.INFRA_REPO }}.git" HEAD:main
-
-  trigger-argocd:
-    name: Trigger ArgoCD Sync (optional)
-    needs: update-infra
+  trigger-argocd-sync:
+    name: Trigger ArgoCD sync
+    needs: update-helm
     runs-on: ubuntu-latest
-    if: ${{ secrets.ARGOCD_SERVER && secrets.ARGOCD_AUTH_TOKEN && secrets.ARGOCD_APP_NAME }}
+    if: ${{ vars.ARGOCD_ENABLED == 'true' }}   # avoid workflow syntax error
+
     steps:
       - name: Install ArgoCD CLI
         run: |
           curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
           chmod +x /usr/local/bin/argocd
 
-      - name: ArgoCD Login
-        run: argocd login ${{ secrets.ARGOCD_SERVER }} --auth-token ${{ secrets.ARGOCD_AUTH_TOKEN }} --insecure
+      - name: Login to ArgoCD
+        run: |
+          argocd login ${{ secrets.ARGOCD_SERVER }} \
+            --auth-token ${{ secrets.ARGOCD_AUTH_TOKEN }} \
+            --grpc-web --insecure
 
-      - name: Sync ArgoCD App
+      - name: Sync Order-Service App
         run: |
           argocd app sync ${{ secrets.ARGOCD_APP_NAME }} --grpc-web
           argocd app wait ${{ secrets.ARGOCD_APP_NAME }} --health --timeout 300
-
-  verify:
-    name: Verify rollout
-    needs: trigger-argocd
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Get GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ secrets.GKE_CLUSTER }}
-          location: ${{ secrets.GKE_REGION }}
-          project_id: ${{ secrets.GCP_PROJECT }}
-
-      - name: Detect namespace
-        id: ns
-        run: |
-          BR="${GITHUB_REF##*/}"
-          if [[ "$BR" == "dev" ]]; then echo "ns=leninkart-dev" >> $GITHUB_OUTPUT
-          elif [[ "$BR" == "staging" ]]; then echo "ns=leninkart-staging" >> $GITHUB_OUTPUT
-          else echo "ns=leninkart-prod" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Wait for order-service rollout
-        run: |
-          NS="${{ steps.ns.outputs.ns }}"
-          kubectl rollout status deployment/order-service -n "$NS" --timeout=180s || kubectl get pods -n "$NS" -o wide
