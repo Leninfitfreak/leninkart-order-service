@@ -13,11 +13,11 @@ permissions:
   id-token: write
 
 env:
-  SERVICE_NAME: product-service
-  IMAGE_BASE: asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.ARTIFACT_REPO }}/product-service
+  SERVICE_NAME: order-service
+  IMAGE_BASE: asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.ARTIFACT_REPO }}/order-service
   INFRA_REPO: ${{ secrets.INFRA_REPO }}             # e.g. Leninfitfreak/leninkart-infra
-  INFRA_CHART_PATH: helm/product-service            # path inside infra repo to the chart
-  VALUES_PATH: helm/product-service/values.yaml     # file to update inside infra repo
+  INFRA_CHART_PATH: helm/order-service            # path inside infra repo to the chart
+  VALUES_PATH: helm/order-service/values.yaml     # file to update inside infra repo
 
 jobs:
 
