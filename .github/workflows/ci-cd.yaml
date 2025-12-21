@@ -15,15 +15,13 @@ env:
   SERVICE_NAME: order-service
   REGION: asia-south1
 
-  # Repo + Branch
+  # Infra repo
   INFRA_REPO: leninkart-infra
-  INFRA_BRANCH: main
 
-  # Helm paths
+  # Helm path
   CHART_PATH: helm/order-service
-  VALUES_FILE: helm/order-service/values.yaml
 
-  # Secret variable names (do NOT change)
+  # Secrets (do NOT rename)
   SECRET_GCP_SA: GCP_SA_KEY
   SECRET_PROJECT: GCP_PROJECT
   SECRET_ARTIFACT_REPO: ARTIFACT_REPO
@@ -31,15 +29,17 @@ env:
 
 jobs:
 
+  # ---------------------------------------------------------
+  # 1️⃣ BUILD & PUSH IMAGE
+  # ---------------------------------------------------------
   build:
     runs-on: ubuntu-latest
 
     outputs:
       image_tag: ${{ steps.export.outputs.image_tag }}
-      image_full: ${{ steps.export.outputs.image_full }}
 
     steps:
-      - name: Checkout source
+      - name: Checkout order-service source
         uses: actions/checkout@v4
 
       - name: Authenticate to GCP
@@ -48,30 +48,46 @@ jobs:
           credentials_json: ${{ secrets[env.SECRET_GCP_SA] }}
 
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
-
-      - name: Build Docker Image
         run: |
-          TAG="${{ github.sha }}"
-          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets[env.SECRET_PROJECT] }}/${{ secrets[env.SECRET_ARTIFACT_REPO] }}/${{ env.SERVICE_NAME }}:${TAG}"
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          docker build -t "$IMAGE" .
-
-      - name: Push Docker Image
-        run: docker push "$IMAGE"
-
-      - name: Export Image Output
+      - name: Build & Push Docker Image
         id: export
         run: |
-          echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "image_full=$IMAGE" >> $GITHUB_OUTPUT
+          IMAGE_TAG="${{ github.sha }}"
+          IMAGE_REPO="${{ env.REGION }}-docker.pkg.dev/${{ secrets[env.SECRET_PROJECT] }}/${{ secrets[env.SECRET_ARTIFACT_REPO] }}/${{ env.SERVICE_NAME }}"
+          IMAGE="$IMAGE_REPO:$IMAGE_TAG"
 
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+  # ---------------------------------------------------------
+  # 2️⃣ UPDATE INFRA REPO (GitOps)
+  # ---------------------------------------------------------
   update-helm-values:
     needs: build
     runs-on: ubuntu-latest
 
+    env:
+      ENV_NAME: ${{ github.ref_name }}
+      INFRA_BRANCH: ${{ github.ref_name }}
+      VALUES_FILE: helm/order-service/values-${{ github.ref_name }}.yaml
+
     steps:
+      - name: Validate environment branch
+        run: |
+          case "${ENV_NAME}" in
+            dev|staging|main)
+              echo "Valid environment: ${ENV_NAME}"
+              ;;
+            *)
+              echo "❌ Invalid deployment branch: ${ENV_NAME}"
+              exit 1
+              ;;
+          esac
+
       - name: Checkout Infra Repo
         uses: actions/checkout@v4
         with:
@@ -79,19 +95,24 @@ jobs:
           token: ${{ secrets[env.SECRET_INFRA_PAT] }}
           ref: ${{ env.INFRA_BRANCH }}
 
-      - name: Update Helm values.yaml
+      - name: Update Helm values file
         run: |
           IMAGE_REPO="${{ env.REGION }}-docker.pkg.dev/${{ secrets[env.SECRET_PROJECT] }}/${{ secrets[env.SECRET_ARTIFACT_REPO] }}/${{ env.SERVICE_NAME }}"
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
 
-          sed -i "s|repository:.*|repository: $IMAGE_REPO|g" ${{ env.VALUES_FILE }}
-          sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|g" ${{ env.VALUES_FILE }}
+          if [ ! -f "${VALUES_FILE}" ]; then
+            echo "❌ ${VALUES_FILE} not found"
+            exit 1
+          fi
+
+          sed -i "s|repository:.*|repository: ${IMAGE_REPO}|g" "${VALUES_FILE}"
+          sed -i "s|tag:.*|tag: \"${IMAGE_TAG}\"|g" "${VALUES_FILE}"
 
       - name: Commit & Push changes
         run: |
-          git config --global user.email "Leninfitfreak@gmail.com"
-          git config --global user.name "Leningithubactions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
 
-          git add ${{ env.VALUES_FILE }}
-          git commit -m "Update image for ${{ env.SERVICE_NAME }} -> ${{ needs.build.outputs.image_tag }}" || echo "No changes"
-          git push origin "${{ env.INFRA_BRANCH }}"
+          git add "${VALUES_FILE}"
+          git commit -m "deploy(order-service): ${ENV_NAME} -> ${IMAGE_TAG}" || echo "No changes to commit"
+          git push origin "${INFRA_BRANCH}"
