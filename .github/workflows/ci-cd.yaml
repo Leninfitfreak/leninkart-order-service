@@ -14,105 +14,95 @@ permissions:
 env:
   SERVICE_NAME: order-service
   REGION: asia-south1
-
-  # Infra repo
-  INFRA_REPO: leninkart-infra
-
-  # Helm path
-  CHART_PATH: helm/order-service
-
-  # Secrets (do NOT rename)
-  SECRET_GCP_SA: GCP_SA_KEY
-  SECRET_PROJECT: GCP_PROJECT
-  SECRET_ARTIFACT_REPO: ARTIFACT_REPO
-  SECRET_INFRA_PAT: INFRA_PAT
+  INFRA_REPO: Leninfitfreak/leninkart-infra
 
 jobs:
 
-  # ---------------------------------------------------------
-  # 1️⃣ BUILD & PUSH IMAGE
-  # ---------------------------------------------------------
-  build:
+  # -----------------------------------
+  # 1️⃣ PREPARE IMAGE TAG
+  # -----------------------------------
+  prepare:
     runs-on: ubuntu-latest
-
     outputs:
-      image_tag: ${{ steps.export.outputs.image_tag }}
+      image_tag: ${{ steps.tag.outputs.image_tag }}
 
     steps:
-      - name: Checkout order-service source
-        uses: actions/checkout@v4
+      - id: tag
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_ID="${GITHUB_RUN_NUMBER}"
+
+          if [[ "${GITHUB_REF##*/}" == "main" ]]; then
+            TAG="prod-build-${BUILD_ID}-${SHORT_SHA}"
+          elif [[ "${GITHUB_REF##*/}" == "staging" ]]; then
+            TAG="staging-build-${BUILD_ID}-${SHORT_SHA}"
+          else
+            TAG="dev-build-${BUILD_ID}-${SHORT_SHA}"
+          fi
+
+          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
+
+  # -----------------------------------
+  # 2️⃣ BUILD & PUSH IMAGE
+  # -----------------------------------
+  build:
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets[env.SECRET_GCP_SA] }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Configure Docker for Artifact Registry
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
         run: |
           gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - name: Build & Push Docker Image
-        id: export
+      - name: Build & Push Image
         run: |
-          IMAGE_TAG="${{ github.sha }}"
-          IMAGE_REPO="${{ env.REGION }}-docker.pkg.dev/${{ secrets[env.SECRET_PROJECT] }}/${{ secrets[env.SECRET_ARTIFACT_REPO] }}/${{ env.SERVICE_NAME }}"
-          IMAGE="$IMAGE_REPO:$IMAGE_TAG"
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.ARTIFACT_REPO }}/${{ env.SERVICE_NAME }}:${{ needs.prepare.outputs.image_tag }}"
 
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
 
-          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-  # ---------------------------------------------------------
-  # 2️⃣ UPDATE INFRA REPO (GitOps)
-  # ---------------------------------------------------------
-  update-helm-values:
-    needs: build
+  # -----------------------------------
+  # 3️⃣ UPDATE INFRA REPO (GitOps)
+  # -----------------------------------
+  promote:
     runs-on: ubuntu-latest
-
-    env:
-      ENV_NAME: ${{ github.ref_name }}
-      INFRA_BRANCH: ${{ github.ref_name }}
-      VALUES_FILE: helm/order-service/values-${{ github.ref_name }}.yaml
+    needs: build
 
     steps:
-      - name: Validate environment branch
+      - name: Set env
         run: |
-          case "${ENV_NAME}" in
-            dev|staging|main)
-              echo "Valid environment: ${ENV_NAME}"
-              ;;
-            *)
-              echo "❌ Invalid deployment branch: ${ENV_NAME}"
-              exit 1
-              ;;
-          esac
+          BRANCH="${GITHUB_REF##*/}"
+          echo "INFRA_BRANCH=$BRANCH" >> $GITHUB_ENV
+          echo "VALUES_FILE=helm/order-service/values-$BRANCH.yaml" >> $GITHUB_ENV
 
-      - name: Checkout Infra Repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/${{ env.INFRA_REPO }}
-          token: ${{ secrets[env.SECRET_INFRA_PAT] }}
+          repository: ${{ env.INFRA_REPO }}
           ref: ${{ env.INFRA_BRANCH }}
+          token: ${{ secrets.INFRA_PAT }}
+          path: infra
 
-      - name: Update Helm values file
+      - uses: mikefarah/yq@v4
+
+      - name: Update image tag
         run: |
-          IMAGE_REPO="${{ env.REGION }}-docker.pkg.dev/${{ secrets[env.SECRET_PROJECT] }}/${{ secrets[env.SECRET_ARTIFACT_REPO] }}/${{ env.SERVICE_NAME }}"
-          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+          cd infra
+          yq -i '.image.tag = "${{ needs.prepare.outputs.image_tag }}"' "$VALUES_FILE"
 
-          if [ ! -f "${VALUES_FILE}" ]; then
-            echo "❌ ${VALUES_FILE} not found"
-            exit 1
-          fi
-
-          sed -i "s|repository:.*|repository: ${IMAGE_REPO}|g" "${VALUES_FILE}"
-          sed -i "s|tag:.*|tag: \"${IMAGE_TAG}\"|g" "${VALUES_FILE}"
-
-      - name: Commit & Push changes
+      - name: Commit & push
         run: |
-          git config user.email "github-actions@users.noreply.github.com"
+          cd infra
           git config user.name "github-actions[bot]"
-
-          git add "${VALUES_FILE}"
-          git commit -m "deploy(order-service): ${ENV_NAME} -> ${IMAGE_TAG}" || echo "No changes to commit"
-          git push origin "${INFRA_BRANCH}"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add "$VALUES_FILE"
+          git commit -m "deploy(order-service): ${{ needs.prepare.outputs.image_tag }}" || echo "No changes"
+          git push origin "$INFRA_BRANCH"
