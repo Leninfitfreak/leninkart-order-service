@@ -19,7 +19,7 @@ env:
   REGION: asia-south1
   ARTIFACT_REPO: leninkart
   INFRA_REPO: Leninfitfreak/leninkart-infra
-  INFRA_BRANCH: ${{ github.ref_name }}  # Reusable: automatically uses dev/staging/main based on push branch
+  INFRA_BRANCH: ${{ github.ref_name }}  # Reusable branch name
 
 jobs:
   # --------------------------------------------------
@@ -64,10 +64,10 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker for Artifact Registry
+      - name: Configure Docker
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - name: Build and push Docker image
+      - name: Build & Push Docker Image
         run: |
           IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPO }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.image_tag }}"
           docker build -t "$IMAGE" .
@@ -80,30 +80,29 @@ jobs:
   promote_release:
     runs-on: ubuntu-latest
     needs: build_image
-    env:
-      VALUES_FILE: helm/order-service/values-${{ env.INFRA_BRANCH }}.yaml  # Reusable: values-dev.yaml / values-staging.yaml / values-prod.yaml
     steps:
       - name: Checkout infra repo
         uses: actions/checkout@v4
         with:
           repository: ${{ env.INFRA_REPO }}
           ref: ${{ env.INFRA_BRANCH }}
-          token: ${{ secrets.INFRA_PAT }}  # Make sure this secret exists
+          token: ${{ secrets.INFRA_PAT }}
           path: infra
 
       - name: Install yq
         uses: mikefarah/yq@v4
 
-      - name: Update image tag in values file
+      - name: Update values file
         run: |
           cd infra
+          VALUES_FILE="helm/order-service/values-${{ env.INFRA_BRANCH }}.yaml"
           yq -i '.image.tag = "${{ needs.build_image.outputs.image_tag }}"' "$VALUES_FILE"
 
-      - name: Commit and push changes
+      - name: Commit & push
         run: |
           cd infra
           git config user.name "github-actions[bot]"
           git config user.email "github-actions@users.noreply.github.com"
-          git add "$VALUES_FILE"
-          git commit -m "deploy(order-service): ${{ needs.build_image.outputs.image_tag }}" || echo "No changes to commit"
-          git push origin "$INFRA_BRANCH"
+          git add .
+          git commit -m "deploy(order-service): ${{ needs.build_image.outputs.image_tag }}" || echo "No changes"
+          git push origin ${{ env.INFRA_BRANCH }}
