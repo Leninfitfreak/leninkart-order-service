@@ -19,6 +19,7 @@ env:
   REGION: asia-south1
   ARTIFACT_REPO: leninkart
   INFRA_REPO: Leninfitfreak/leninkart-infra
+  INFRA_PAT_SECRET_NAME: INFRA_PAT  # <-- Variablized secret name (change only here if needed)
 
 jobs:
   prepare:
@@ -83,22 +84,22 @@ jobs:
         with:
           repository: ${{ env.INFRA_REPO }}
           ref: ${{ needs.prepare.outputs.infra_branch }}
-          token: ${{ secrets.INFRA_PAT }}
+          token: ${{ secrets[env.INFRA_PAT_SECRET_NAME] }}  # <-- Uses the variablized secret name
           path: infra
 
       - name: Install yq
         uses: mikefarah/yq@v4
 
-      - name: Update image tag
+      - name: Update image tag in values file
         run: |
           cd infra
           yq -i '.image.tag = "${{ needs.build_image.outputs.image_tag }}"' "${{ needs.prepare.outputs.values_file }}"
 
-      - name: Commit & push
+      - name: Commit & push changes
         run: |
           cd infra
           git config user.name "github-actions[bot]"
           git config user.email "github-actions@users.noreply.github.com"
           git add "${{ needs.prepare.outputs.values_file }}"
-          git commit -m "deploy(order-service): ${{ needs.build_image.outputs.image_tag }}" || echo "No changes"
+          git commit -m "deploy(order-service): ${{ needs.build_image.outputs.image_tag }}" || echo "No changes to commit"
           git push origin ${{ needs.prepare.outputs.infra_branch }}
