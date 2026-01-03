@@ -1,12 +1,14 @@
+# Stage 1: Build the app
 FROM maven:3.8.8-eclipse-temurin-17 AS builder
 WORKDIR /app
 COPY pom.xml .
-# Download dependencies first (caching layer)
+# Cache dependencies
 RUN mvn dependency:go-offline -B
 COPY src ./src
 RUN mvn -B -DskipTests clean package
 
-FROM eclipse-temurin:17-jre-jammy  # Use JRE (smaller) instead of JDK
+# Stage 2: Runtime image (smaller JRE)
+FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 COPY --from=builder /app/target/*.jar app.jar
 
