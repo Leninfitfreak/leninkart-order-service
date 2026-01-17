@@ -1,4 +1,4 @@
-name: CI/CD for Product-Service (via Helm + ArgoCD)
+name: CI/CD for Order-Service (via Helm + ArgoCD)
 
 on:
   push:
@@ -6,14 +6,12 @@ on:
       - dev
 
 env:
-  SERVICE_NAME: product-service
-  REGION: asia-south1
+  SERVICE_NAME: order-service
 
   INFRA_REPO: leninkart-infra
   INFRA_BRANCH: dev
 
-  CHART_PATH: helm/product-service
-  VALUES_FILE: helm/product-service/values-dev.yaml
+  VALUES_FILE: helm/order-service/values-dev.yaml
 
   SECRET_INFRA_PAT: INFRA_PAT
 
@@ -23,10 +21,9 @@ jobs:
 
     outputs:
       image_tag: ${{ steps.export.outputs.image_tag }}
-      image_full: ${{ steps.export.outputs.image_full }}
 
     steps:
-      - name: Checkout source
+      - name: Checkout source code
         uses: actions/checkout@v4
 
       - name: Login to Docker Hub
@@ -45,40 +42,39 @@ jobs:
       - name: Push Docker Image
         run: docker push "$IMAGE"
 
-      - name: Export Image Output
+      - name: Export Image Tag
         id: export
         run: |
           echo "image_tag=${{ github.run_id }}" >> $GITHUB_OUTPUT
-          echo "image_full=$IMAGE" >> $GITHUB_OUTPUT
 
   update-helm-values:
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Infra Repo
+      - name: Checkout Infra Repo (dev)
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/${{ env.INFRA_REPO }}
           token: ${{ secrets[env.SECRET_INFRA_PAT] }}
           ref: ${{ env.INFRA_BRANCH }}
 
-      - name: Update Helm values.yaml
+      - name: Update order-service Helm values
         run: |
-          IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}"
+          IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/order-service"
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
 
           sed -i "s|repository:.*|repository: $IMAGE_REPO|" ${{ env.VALUES_FILE }}
           sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|" ${{ env.VALUES_FILE }}
 
-          echo "Updated values file:"
+          echo "Updated file:"
           cat ${{ env.VALUES_FILE }}
 
-      - name: Commit & Push changes
+      - name: Commit & Push (dev)
         run: |
           git config --global user.email "Leninfitfreak@gmail.com"
           git config --global user.name "Leningithubactions"
 
           git add ${{ env.VALUES_FILE }}
-          git commit -m "Update image for product-service -> run-${{ needs.build.outputs.image_tag }}" || echo "No changes to commit"
-          git push origin "${{ env.INFRA_BRANCH }}"
+          git commit -m "Update image for order-service -> run-${{ needs.build.outputs.image_tag }}" || echo "No changes"
+          git push origin dev
