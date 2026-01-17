@@ -8,16 +8,13 @@ on:
 env:
   SERVICE_NAME: product-service
   REGION: asia-south1
-  
+
   INFRA_REPO: leninkart-infra
   INFRA_BRANCH: dev
 
   CHART_PATH: helm/product-service
   VALUES_FILE: helm/product-service/values-dev.yaml
 
-  SECRET_GCP_SA: GCP_SA_KEY
-  SECRET_PROJECT: GCP_PROJECT
-  SECRET_ARTIFACT_REPO: ARTIFACT_REPO
   SECRET_INFRA_PAT: INFRA_PAT
 
 jobs:
@@ -32,17 +29,15 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      # 🔁 CHANGE 1: Docker Hub login (replaces GAR auth)
       - name: Login to Docker Hub
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
           docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      # 🔁 CHANGE 2: GitHub RUN ID based tagging
       - name: Build Docker Image
         run: |
-          TAG="${{ github.run_id }}"
-          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}:${TAG}"
+          IMAGE_TAG="${{ github.run_id }}"
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}:${IMAGE_TAG}"
 
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           docker build -t "$IMAGE" .
@@ -73,14 +68,17 @@ jobs:
           IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}"
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
 
-          sed -i "s|repository:.*|repository: $IMAGE_REPO|g" ${{ env.VALUES_FILE }}
-          sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|g" ${{ env.VALUES_FILE }}
+          sed -i "s|repository:.*|repository: $IMAGE_REPO|" ${{ env.VALUES_FILE }}
+          sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|" ${{ env.VALUES_FILE }}
+
+          echo "Updated values file:"
+          cat ${{ env.VALUES_FILE }}
 
       - name: Commit & Push changes
-        run: |   
+        run: |
           git config --global user.email "Leninfitfreak@gmail.com"
           git config --global user.name "Leningithubactions"
 
           git add ${{ env.VALUES_FILE }}
-          git commit -m "Update image for product-service -> run-${{ needs.build.outputs.image_tag }}" || echo "No changes"
+          git commit -m "Update image for product-service -> run-${{ needs.build.outputs.image_tag }}" || echo "No changes to commit"
           git push origin "${{ env.INFRA_BRANCH }}"
