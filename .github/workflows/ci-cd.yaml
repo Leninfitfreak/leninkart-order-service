@@ -1,4 +1,4 @@
-name: CI/CD for Auto-Service (via Helm + ArgoCD)
+name: CI/CD for Product-Service (via Helm + ArgoCD)
 
 on:
   push:
@@ -6,14 +6,18 @@ on:
       - dev
 
 env:
-  SERVICE_NAME: auto-service
-
+  SERVICE_NAME: product-service
+  REGION: asia-south1
+  
   INFRA_REPO: leninkart-infra
   INFRA_BRANCH: dev
 
-  CHART_PATH: helm/auto-service
-  VALUES_FILE: helm/auto-service/values-dev.yaml
+  CHART_PATH: helm/product-service
+  VALUES_FILE: helm/product-service/values-dev.yaml
 
+  SECRET_GCP_SA: GCP_SA_KEY
+  SECRET_PROJECT: GCP_PROJECT
+  SECRET_ARTIFACT_REPO: ARTIFACT_REPO
   SECRET_INFRA_PAT: INFRA_PAT
 
 jobs:
@@ -28,17 +32,18 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      # ✅ Docker Hub login (ONLY ADDITION)
+      # 🔁 CHANGE 1: Docker Hub login (replaces GAR auth)
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
+          docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
+      # 🔁 CHANGE 2: GitHub RUN ID based tagging
       - name: Build Docker Image
         run: |
-          TAG="${{ github.sha }}"
+          TAG="${{ github.run_id }}"
           IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}:${TAG}"
+
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           docker build -t "$IMAGE" .
 
@@ -48,7 +53,7 @@ jobs:
       - name: Export Image Output
         id: export
         run: |
-          echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "image_tag=${{ github.run_id }}" >> $GITHUB_OUTPUT
           echo "image_full=$IMAGE" >> $GITHUB_OUTPUT
 
   update-helm-values:
@@ -67,13 +72,15 @@ jobs:
         run: |
           IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}"
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+
           sed -i "s|repository:.*|repository: $IMAGE_REPO|g" ${{ env.VALUES_FILE }}
           sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|g" ${{ env.VALUES_FILE }}
 
       - name: Commit & Push changes
-        run: |
+        run: |   
           git config --global user.email "Leninfitfreak@gmail.com"
           git config --global user.name "Leningithubactions"
+
           git add ${{ env.VALUES_FILE }}
-          git commit -m "Update image for auto-service -> ${{ needs.build.outputs.image_tag }}" || echo "No changes"
+          git commit -m "Update image for product-service -> run-${{ needs.build.outputs.image_tag }}" || echo "No changes"
           git push origin "${{ env.INFRA_BRANCH }}"
