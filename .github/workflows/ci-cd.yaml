@@ -1,105 +1,79 @@
-name: Deploy Order Service to GCP (GitOps)
+name: CI/CD for Auto-Service (via Helm + ArgoCD)
 
 on:
   push:
     branches:
       - dev
-      - staging
-      - main
-  workflow_dispatch:
-
-concurrency:
-  group: order-service-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
-  SERVICE_NAME: order-service
-  IMAGE_NAME: order-service
-  GCP_PROJECT_ID: leninkart-478305
-  REGION: asia-south1
-  ARTIFACT_REPO: leninkart
-  INFRA_REPO: Leninfitfreak/leninkart-infra
-  INFRA_PAT_SECRET_NAME: INFRA_PAT  # <-- Variablized secret name (change only here if needed)
+  SERVICE_NAME: auto-service
+
+  INFRA_REPO: leninkart-infra
+  INFRA_BRANCH: dev
+
+  CHART_PATH: helm/auto-service
+  VALUES_FILE: helm/auto-service/values-dev.yaml
+
+  SECRET_INFRA_PAT: INFRA_PAT
 
 jobs:
-  prepare:
+  build:
     runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.meta.outputs.image_tag }}
-      infra_branch: ${{ steps.meta.outputs.infra_branch }}
-      values_file: ${{ steps.meta.outputs.values_file }}
-    steps:
-      - name: Generate image tag and variables
-        id: meta
-        run: |
-          BRANCH="${{ github.ref_name }}"
-          SHORT_SHA="${{ github.sha }}" | cut -c1-7
-          if [[ "$BRANCH" == "main" ]]; then
-            PREFIX="prod"
-            VALUES="values-prod.yaml"
-          elif [[ "$BRANCH" == "staging" ]]; then
-            PREFIX="staging"
-            VALUES="values-staging.yaml"
-          else
-            PREFIX="dev"
-            VALUES="values-dev.yaml"
-          fi
-          TAG="${PREFIX}-${{ github.run_number }}-${SHORT_SHA}"
-          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
-          echo "infra_branch=$BRANCH" >> $GITHUB_OUTPUT
-          echo "values_file=helm/order-service/$VALUES" >> $GITHUB_OUTPUT
 
-  build_image:
-    runs-on: ubuntu-latest
-    needs: prepare
     outputs:
-      image_tag: ${{ needs.prepare.outputs.image_tag }}
-    steps:
-      - uses: actions/checkout@v4
+      image_tag: ${{ steps.export.outputs.image_tag }}
+      image_full: ${{ steps.export.outputs.image_full }}
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ✅ Docker Hub login (ONLY ADDITION)
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Configure Docker
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
-
-      - name: Build & Push Docker Image
+      - name: Build Docker Image
         run: |
-          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPO }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.image_tag }}"
+          TAG="${{ github.sha }}"
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}:${TAG}"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "Pushed $IMAGE"
 
-  promote_release:
+      - name: Push Docker Image
+        run: docker push "$IMAGE"
+
+      - name: Export Image Output
+        id: export
+        run: |
+          echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "image_full=$IMAGE" >> $GITHUB_OUTPUT
+
+  update-helm-values:
+    needs: build
     runs-on: ubuntu-latest
-    needs: [prepare, build_image]
+
     steps:
-      - name: Checkout infra repo
+      - name: Checkout Infra Repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.INFRA_REPO }}
-          ref: ${{ needs.prepare.outputs.infra_branch }}
-          token: ${{ secrets[env.INFRA_PAT_SECRET_NAME] }}  # <-- Uses the variablized secret name
-          path: infra
+          repository: ${{ github.repository_owner }}/${{ env.INFRA_REPO }}
+          token: ${{ secrets[env.SECRET_INFRA_PAT] }}
+          ref: ${{ env.INFRA_BRANCH }}
 
-      - name: Install yq
-        uses: mikefarah/yq@v4
-
-      - name: Update image tag in values file
+      - name: Update Helm values.yaml
         run: |
-          cd infra
-          yq -i '.image.tag = "${{ needs.build_image.outputs.image_tag }}"' "${{ needs.prepare.outputs.values_file }}"
+          IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}"
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+          sed -i "s|repository:.*|repository: $IMAGE_REPO|g" ${{ env.VALUES_FILE }}
+          sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|g" ${{ env.VALUES_FILE }}
 
-      - name: Commit & push changes
+      - name: Commit & Push changes
         run: |
-          cd infra
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add "${{ needs.prepare.outputs.values_file }}"
-          git commit -m "deploy(order-service): ${{ needs.build_image.outputs.image_tag }}" || echo "No changes to commit"
-          git push origin ${{ needs.prepare.outputs.infra_branch }}
+          git config --global user.email "Leninfitfreak@gmail.com"
+          git config --global user.name "Leningithubactions"
+          git add ${{ env.VALUES_FILE }}
+          git commit -m "Update image for auto-service -> ${{ needs.build.outputs.image_tag }}" || echo "No changes"
+          git push origin "${{ env.INFRA_BRANCH }}"
