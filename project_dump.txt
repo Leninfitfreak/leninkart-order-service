@@ -1,0 +1,360 @@
+# Project Dump - Root: C:\Users\Lenovo\Desktop\dust\leninkart-order-service
+
+### FILE: .gitignore
+```
+.env
+*.pem
+*.key
+*.crt
+*.log
+node_modules
+target
+__pycache__
+.idea
+.vscode
+*.bak
+```
+
+### FILE: Dockerfile
+```
+# Stage 1: Build the app
+FROM maven:3.8.8-eclipse-temurin-17 AS builder
+WORKDIR /app
+COPY pom.xml .
+# Cache dependencies for faster rebuilds
+RUN mvn dependency:go-offline -B
+COPY src ./src
+RUN mvn -B -DskipTests clean package
+
+# Stage 2: Runtime image (smaller JRE instead of full JDK)
+FROM eclipse-temurin:17-jre-jammy
+WORKDIR /app
+COPY --from=builder /app/target/*.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+```
+
+### FILE: dump.py
+```
+import os
+import argparse
+
+def dump_project_to_file(root_dir='.', output_file='project_dump.txt', ignore_dirs=None, ignore_files=None):
+    if ignore_dirs is None:
+        ignore_dirs = {'.git', '__pycache__', '.idea', '.vscode', 'node_modules', 'build', 'dist', '.gradle'}
+    if ignore_files is None:
+        ignore_files = {'.DS_Store', 'Thumbs.db'}
+
+    with open(output_file, 'w', encoding='utf-8') as outfile:
+        outfile.write(f"# Project Dump - Root: {os.path.abspath(root_dir)}\n\n")
+
+        for current_dir, dirs, files in os.walk(root_dir):
+            # Skip ignored directories (in-place modification)
+            dirs[:] = [d for d in dirs if d not in ignore_dirs]
+
+            relative_dir = os.path.relpath(current_dir, root_dir)
+            if relative_dir != '.':
+                outfile.write(f"### DIRECTORY: {relative_dir}/\n\n")
+
+            for file_name in sorted(files):
+                if file_name in ignore_files:
+                    continue
+
+                file_path = os.path.join(current_dir, file_name)
+                relative_path = os.path.relpath(file_path, root_dir)
+
+                outfile.write(f"### FILE: {relative_path}\n")
+                outfile.write("```\n")
+
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    outfile.write(content.rstrip() + "\n")  # Ensure trailing newline
+                except UnicodeDecodeError:
+                    outfile.write("<BINARY OR NON-UTF8 FILE - CONTENT SKIPPED>\n")
+                except PermissionError:
+                    outfile.write("<PERMISSION DENIED - CONTENT SKIPPED>\n")
+                except Exception as e:
+                    outfile.write(f"<ERROR READING FILE: {str(e)}>\n")
+
+                outfile.write("```\n\n")
+
+    print(f"Project dump completed! File saved as '{output_file}' in the current directory.")
+    print("Share the content of this file with me — I'll analyze every line and fix LeninKart!")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Dump entire project file structure and content to a single text file")
+    parser.add_argument('-o', '--output', default='project_dump.txt', help='Output file name (default: project_dump.txt)')
+    parser.add_argument('-r', '--root', default='.', help='Root directory to scan (default: current directory)')
+
+    args = parser.parse_args()
+
+    dump_project_to_file(root_dir=args.root, output_file=args.output)
+```
+
+### FILE: pom.xml
+```
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.0</version>
+    <relativePath/> <!-- lookup from Maven Central -->
+  </parent>
+  <groupId>com.example</groupId>
+  <artifactId>leninkart-order-service</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <name>Order Service</name>
+  <description>LeninKart Order Service</description>
+  <properties>
+    <java.version>17</java.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+    </dependency>
+<<<<<<< HEAD
+    <!-- Spring Boot Actuator for /actuator/health endpoint (required for probes) -->
+=======
+    <!-- Spring Boot Actuator — for /actuator/health endpoint (required for probes) -->
+>>>>>>> dfbbe23d2804abf454ccfa2f29ee44e86c9ea012
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!-- PostgreSQL JDBC Driver -->
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+```
+
+### FILE: project_dump.txt
+```
+
+```
+
+### DIRECTORY: .github/
+
+### DIRECTORY: .github\workflows/
+
+### FILE: .github\workflows\ci-cd.yaml
+```
+name: CI/CD for Order-Service (via Helm + ArgoCD)
+
+on:
+  push:
+    branches:
+      - dev
+
+env:
+  SERVICE_NAME: order-service
+
+  INFRA_REPO: leninkart-infra
+  INFRA_BRANCH: dev
+
+  VALUES_FILE: helm/order-service/values-dev.yaml
+
+  SECRET_INFRA_PAT: INFRA_PAT
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.export.outputs.image_tag }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
+          docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_TAG="${{ github.run_id }}"
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}:${IMAGE_TAG}"
+
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          docker build -t "$IMAGE" .
+
+      - name: Push Docker Image
+        run: docker push "$IMAGE"
+
+      - name: Export Image Tag
+        id: export
+        run: |
+          echo "image_tag=${{ github.run_id }}" >> $GITHUB_OUTPUT
+
+  update-helm-values:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Infra Repo (dev)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ env.INFRA_REPO }}
+          token: ${{ secrets[env.SECRET_INFRA_PAT] }}
+          ref: ${{ env.INFRA_BRANCH }}
+
+      - name: Update order-service Helm values
+        run: |
+          IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/order-service"
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+
+          sed -i "s|repository:.*|repository: $IMAGE_REPO|" ${{ env.VALUES_FILE }}
+          sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|" ${{ env.VALUES_FILE }}
+
+          echo "Updated file:"
+          cat ${{ env.VALUES_FILE }}
+
+      - name: Commit & Push (dev)
+        run: |
+          git config --global user.email "Leninfitfreak@gmail.com"
+          git config --global user.name "Leningithubactions"
+
+          git add ${{ env.VALUES_FILE }}
+          git commit -m "Update image for order-service -> run-${{ needs.build.outputs.image_tag }}" || echo "No changes"
+          git push origin dev
+```
+
+### DIRECTORY: src/
+
+### DIRECTORY: src\main/
+
+### DIRECTORY: src\main\java/
+
+### DIRECTORY: src\main\java\com/
+
+### DIRECTORY: src\main\java\com\example/
+
+### DIRECTORY: src\main\java\com\example\order/
+
+### FILE: src\main\java\com\example\order\OrderServiceApplication.java
+```
+package com.example.order; import org.springframework.boot.SpringApplication; import org.springframework.boot.autoconfigure.SpringBootApplication; @SpringBootApplication public class OrderServiceApplication{ public static void main(String[] args){ SpringApplication.run(OrderServiceApplication.class,args);} }
+```
+
+### DIRECTORY: src\main\java\com\example\order\controller/
+
+### FILE: src\main\java\com\example\order\controller\OrderController.java
+```
+package com.example.order.controller; import com.example.order.model.OrderEntity; import com.example.order.repo.OrderRepository; import org.springframework.web.bind.annotation.*; import java.util.List; @RestController @RequestMapping("/api/orders") public class OrderController { private final OrderRepository repo; public OrderController(OrderRepository repo){this.repo=repo;} @GetMapping public List<OrderEntity> all(){ return repo.findAllByOrderByIdDesc(); } }
+```
+
+### DIRECTORY: src\main\java\com\example\order\kafka/
+
+### FILE: src\main\java\com\example\order\kafka\OrderConsumer.java
+```
+package com.example.order.kafka; import com.example.order.model.OrderEntity; import com.example.order.repo.OrderRepository; import org.springframework.kafka.annotation.KafkaListener; import org.springframework.stereotype.Service; import com.fasterxml.jackson.databind.ObjectMapper; import java.util.Map; @Service public class OrderConsumer { private final OrderRepository repo; private final ObjectMapper mapper=new ObjectMapper(); public OrderConsumer(OrderRepository repo){ this.repo=repo; } @KafkaListener(topics = "product-orders", groupId = "order-group") public void listen(String message) throws Exception{ Map<String,Object> m=mapper.readValue(message,Map.class); Long pid=Long.valueOf(String.valueOf(m.get("productId"))); String name=String.valueOf(m.get("name")); Double price=Double.valueOf(String.valueOf(m.get("price"))); OrderEntity o=new OrderEntity(pid,name,price,"CREATED"); repo.save(o); System.out.println("Order saved from kafka: " + o.getId()); } }
+```
+
+### DIRECTORY: src\main\java\com\example\order\model/
+
+### FILE: src\main\java\com\example\order\model\OrderEntity.java
+```
+package com.example.order.model; import jakarta.persistence.*; @Entity @Table(name="orders") public class OrderEntity { @Id @GeneratedValue(strategy=GenerationType.IDENTITY) private Long id; private Long productId; private String productName; private Double price; private String status; public OrderEntity(){} public OrderEntity(Long pid,String name,Double price,String s){this.productId=pid;this.productName=name;this.price=price;this.status=s;} public Long getId(){return id;} public Long getProductId(){return productId;} public String getProductName(){return productName;} public Double getPrice(){return price;} public String getStatus(){return status;} public void setStatus(String s){this.status=s;} }
+```
+
+### DIRECTORY: src\main\java\com\example\order\repo/
+
+### FILE: src\main\java\com\example\order\repo\OrderRepository.java
+```
+package com.example.order.repo; import com.example.order.model.OrderEntity; import org.springframework.data.jpa.repository.JpaRepository; import java.util.List; public interface OrderRepository extends JpaRepository<OrderEntity,Long>{ java.util.List<OrderEntity> findAllByOrderByIdDesc(); }
+```
+
+### DIRECTORY: src\main\resources/
+
+### FILE: src\main\resources\application.properties
+```
+# ================================
+<<<<<<< HEAD
+=======
+# APPLICATION
+# ================================
+spring.application.name=order-service
+
+# ================================
+>>>>>>> dfbbe23d2804abf454ccfa2f29ee44e86c9ea012
+# SERVER
+# ================================
+server.port=8080
+
+# ================================
+<<<<<<< HEAD
+# DATABASE (MySQL)
+# ================================
+spring.datasource.url=jdbc:mysql://mysql.dev.svc.cluster.local:3306/leninkart?useSSL=false&allowPublicKeyRetrieval=true
+spring.datasource.username=root
+spring.datasource.password=root123
+
+# Let Spring Boot auto-detect driver (MySQL)
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+=======
+# DATABASE (PostgreSQL via ENV)
+# ================================
+spring.datasource.url=${SPRING_DATASOURCE_URL}
+spring.datasource.username=${SPRING_DATASOURCE_USERNAME}
+spring.datasource.password=${SPRING_DATASOURCE_PASSWORD}
+
+spring.datasource.hikari.initialization-fail-timeout=${SPRING_DATASOURCE_HIKARI_INITIALIZATION_FAIL_TIMEOUT:60000}
+
+spring.jpa.database-platform=${SPRING_JPA_DATABASE_PLATFORM}
+spring.jpa.hibernate.ddl-auto=${SPRING_JPA_HIBERNATE_DDL_AUTO}
+spring.jpa.open-in-view=false
+>>>>>>> dfbbe23d2804abf454ccfa2f29ee44e86c9ea012
+
+# ================================
+# KAFKA
+# ================================
+<<<<<<< HEAD
+spring.kafka.bootstrap-servers=kafka.dev.svc.cluster.local:9092
+=======
+spring.kafka.bootstrap-servers=${SPRING_KAFKA_BOOTSTRAP_SERVERS:kafka.dev.svc.cluster.local:9092}
+
+# ================================
+# ACTUATOR (CRITICAL FOR K8s)
+# ================================
+management.endpoints.web.exposure.include=health,info
+management.endpoint.health.probes.enabled=true
+management.health.livenessstate.enabled=true
+management.health.readinessstate.enabled=true
+
+# ================================
+# ACTUATOR BASE PATH (DEFAULT)
+# ================================
+management.endpoints.web.base-path=/actuator
+>>>>>>> dfbbe23d2804abf454ccfa2f29ee44e86c9ea012
+```
+

@@ -1,1 +1,7 @@
-package com.example.order.controller; import com.example.order.model.OrderEntity; import com.example.order.repo.OrderRepository; import org.springframework.web.bind.annotation.*; import java.util.List; @RestController @RequestMapping("/api/orders") public class OrderController { private final OrderRepository repo; public OrderController(OrderRepository repo){this.repo=repo;} @GetMapping public List<OrderEntity> all(){ return repo.findAllByOrderByIdDesc(); } }
+package com.example.order.controller; import com.example.order.model.OrderEntity; import com.example.order.repo.OrderRepository; import org.springframework.web.bind.annotation.*; import java.util.List; @RestController @RequestMapping("/api/orders") public class OrderController { private final OrderRepository repo; public OrderController(OrderRepository repo){this.repo=repo;} @GetMapping public List<OrderEntity> all(){
+        try {
+            return repo.findAllByOrderByIdDesc();
+        } catch (Exception e) {
+            return java.util.Collections.emptyList();
+        }
+    } }
