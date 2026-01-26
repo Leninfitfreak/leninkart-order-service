@@ -4,24 +4,26 @@ on:
   push:
     branches:
       - dev
+      - staging
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: order-service-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   SERVICE_NAME: order-service
-
   INFRA_REPO: leninkart-infra
   INFRA_BRANCH: dev
-
   VALUES_FILE: helm/order-service/values-dev.yaml
-
   SECRET_INFRA_PAT: INFRA_PAT
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     outputs:
       image_tag: ${{ steps.export.outputs.image_tag }}
-
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -35,7 +37,6 @@ jobs:
         run: |
           IMAGE_TAG="${{ github.run_id }}"
           IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.SERVICE_NAME }}:${IMAGE_TAG}"
-
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           docker build -t "$IMAGE" .
 
@@ -50,31 +51,49 @@ jobs:
   update-helm-values:
     needs: build
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Infra Repo (dev)
+      - name: Select infra branch & values file
+        run: |
+          BRANCH="${GITHUB_REF##*/}"
+          if [[ "$BRANCH" == "main" ]]; then
+            echo "INFRA_BRANCH=main" >> "$GITHUB_ENV"
+            echo "VALUES_FILE=helm/order-service/values-prod.yaml" >> "$GITHUB_ENV"
+          elif [[ "$BRANCH" == "staging" ]]; then
+            echo "INFRA_BRANCH=staging" >> "$GITHUB_ENV"
+            echo "VALUES_FILE=helm/order-service/values-staging.yaml" >> "$GITHUB_ENV"
+          else
+            echo "INFRA_BRANCH=dev" >> "$GITHUB_ENV"
+            echo "VALUES_FILE=helm/order-service/values-dev.yaml" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout Infra Repo
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/${{ env.INFRA_REPO }}
           token: ${{ secrets[env.SECRET_INFRA_PAT] }}
           ref: ${{ env.INFRA_BRANCH }}
 
+      - name: Install yq
+        uses: mikefarah/yq@v4
+
       - name: Update order-service Helm values
         run: |
           IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/order-service"
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+          
+          echo "📁 Updating: $VALUES_FILE"
+          echo "📦 Image: $IMAGE_REPO:$IMAGE_TAG"
+          
+          yq -i ".image.repository = \"$IMAGE_REPO\"" "$VALUES_FILE"
+          yq -i ".image.tag = \"$IMAGE_TAG\"" "$VALUES_FILE"
+          
+          echo "✅ Updated file:"
+          cat "$VALUES_FILE"
 
-          sed -i "s|repository:.*|repository: $IMAGE_REPO|" ${{ env.VALUES_FILE }}
-          sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|" ${{ env.VALUES_FILE }}
-
-          echo "Updated file:"
-          cat ${{ env.VALUES_FILE }}
-
-      - name: Commit & Push (dev)
+      - name: Commit & Push
         run: |
           git config --global user.email "Leninfitfreak@gmail.com"
           git config --global user.name "Leningithubactions"
-
-          git add ${{ env.VALUES_FILE }}
-          git commit -m "Update image for order-service -> run-${{ needs.build.outputs.image_tag }}" || echo "No changes"
-          git push origin dev
+          git add "$VALUES_FILE"
+          git commit -m "deploy(order-service): run-${{ needs.build.outputs.image_tag }}" || echo "No changes"
+          git push origin "$INFRA_BRANCH"
