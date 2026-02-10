@@ -16,7 +16,7 @@ env:
   SERVICE_NAME: order-service
   INFRA_REPO: leninkart-infra
   INFRA_BRANCH: dev
-  VALUES_FILE: helm/order-service/values-dev.yaml
+  VALUES_FILE: applications/order-service/helm/values-dev.yaml
   SECRET_INFRA_PAT: INFRA_PAT
 
 jobs:
