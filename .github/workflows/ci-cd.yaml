@@ -72,12 +72,14 @@ jobs:
           repository: ${{ github.repository_owner }}/${{ env.INFRA_REPO }}
           token: ${{ secrets[env.SECRET_INFRA_PAT] }}
           ref: ${{ env.INFRA_BRANCH }}
+          path: infra
 
       - name: Install yq
         uses: mikefarah/yq@v4
 
       - name: Update order-service Helm values
         run: |
+          cd infra
           IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/order-service"
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
           
@@ -92,6 +94,7 @@ jobs:
 
       - name: Commit & Push
         run: |
+          cd infra
           git config --global user.email "Leninfitfreak@gmail.com"
           git config --global user.name "Leningithubactions"
           git add "$VALUES_FILE"

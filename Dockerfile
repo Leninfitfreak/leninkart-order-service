@@ -5,9 +5,9 @@ COPY pom.xml .
 # Cache dependencies for faster rebuilds
 RUN mvn dependency:go-offline -B
 COPY src ./src
-RUN mvn -B -DskipTests clean package
+RUN mvn -B -T1C -DskipTests clean package
 
-# Stage 2: Runtime image (smaller JRE instead of full JDK)
+# Stage 2: Runtime image
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 COPY --from=builder /app/target/*.jar app.jar
