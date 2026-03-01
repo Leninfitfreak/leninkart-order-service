@@ -33,6 +33,11 @@ jobs:
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
           docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
+      - name: Verify OpenTelemetry Java agent in build context
+        run: |
+          test -f otel/opentelemetry-javaagent.jar
+          ls -lh otel/opentelemetry-javaagent.jar
+
       - name: Build Docker Image
         run: |
           IMAGE_TAG="${{ github.run_id }}"
