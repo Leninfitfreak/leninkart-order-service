@@ -6,6 +6,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
 public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
-    List<OrderEntity> findAllByOrderByIdDesc();
-    List<OrderEntity> findAllByUserNameOrderByIdDesc(String userName);
+    List<OrderEntity> findTop200ByOrderByIdDesc();
+    List<OrderEntity> findTop200ByUserNameOrderByIdDesc(String userName);
 }

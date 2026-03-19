@@ -27,9 +27,9 @@ public class OrderController {
                 return Collections.emptyList();
             }
             if ("ADMIN".equalsIgnoreCase(role)) {
-                return repo.findAllByOrderByIdDesc();
+                return repo.findTop200ByOrderByIdDesc();
             }
-            return repo.findAllByUserNameOrderByIdDesc(userId);
+            return repo.findTop200ByUserNameOrderByIdDesc(userId);
         } catch (Exception e) {
             return Collections.emptyList();
         }
