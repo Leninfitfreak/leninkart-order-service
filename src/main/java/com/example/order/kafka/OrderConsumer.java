@@ -1,9 +1,11 @@
 package com.example.order.kafka;
 
 import com.example.order.model.OrderEntity;
+import com.example.order.observability.BusinessMetrics;
 import com.example.order.observability.StructuredLog;
 import com.example.order.repo.OrderRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -20,9 +22,11 @@ public class OrderConsumer {
 
     private final OrderRepository repo;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final BusinessMetrics metrics;
 
-    public OrderConsumer(OrderRepository repo) {
+    public OrderConsumer(OrderRepository repo, BusinessMetrics metrics) {
         this.repo = repo;
+        this.metrics = metrics;
     }
 
     @KafkaListener(topics = "product-orders", groupId = "order-group")
@@ -32,6 +36,8 @@ public class OrderConsumer {
         @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
         @Header(KafkaHeaders.OFFSET) long offset
     ) throws Exception {
+        metrics.recordOrderEventReceived();
+        Timer.Sample processingTimer = metrics.startOrderEventProcessing();
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("topic", topic);
         fields.put("partition", partition);
@@ -50,6 +56,7 @@ public class OrderConsumer {
             OrderEntity order = new OrderEntity(productId, name, price, "CREATED");
             order.setUserName(user);
             OrderEntity saved = repo.save(order);
+            metrics.recordOrderCreated();
 
             Map<String, Object> successFields = new LinkedHashMap<>(fields);
             successFields.put("product_id", productId);
@@ -57,10 +64,13 @@ public class OrderConsumer {
             successFields.put("user", user);
             StructuredLog.info(logger, "kafka.consume.product-orders", "Order event processed", successFields);
         } catch (Exception ex) {
+            metrics.recordOrderProcessingFailure();
             Map<String, Object> errorFields = new LinkedHashMap<>(fields);
             errorFields.put("payload_preview", message);
             StructuredLog.error(logger, "kafka.consume.product-orders", "Order event processing failed", ex, errorFields);
             throw ex;
+        } finally {
+            metrics.stopOrderEventProcessing(processingTimer);
         }
     }
 }
